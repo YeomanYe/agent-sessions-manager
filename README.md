@@ -44,7 +44,8 @@ agent-sessions-manager/
 
 ## Source of Truth
 
-See `docs/SPEC-skill-recall.md` for full spec.
+- [`ROADMAP.md`](./ROADMAP.md) — 当前进度 + 下一步 + 决策记录(DR)
+- [`docs/SPEC-skill-recall.md`](./docs/SPEC-skill-recall.md) — 完整 spec
 
 ## Why this repo (not in `node-scripts`)
 

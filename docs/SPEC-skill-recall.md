@@ -506,29 +506,10 @@ if (!apiKey) throw new Error(`Missing env: ${config.llm_fallback.api_key_env}`)
 
 ## 15. Phase 落地
 
-### Phase 1: MVP(2-3 周, ~500-700 行 TS)
+Phase 1 已 shipped(2026-05-28),Phase 2+ 待开干。
 
-按 §4 目录结构搭框架,实现:
-- config-loader + skill-md-loader + static-extractor
-- agent-sessions-cli 对接 + processed-tracker
-- 9 个 detector 中的简单 5 个(trigger-miss / false-trigger / wrong-skill / step-skip / user-aborted)
-- findings-writer + weekly-md
-- IM 推送
-- 4 个 starter skill 的 yaml 配置完整跑通
-
-### Phase 2: LLM 增强(1 周, +200 行)
-
-- llm-extractor + extract cache
-- llm-fallback detector
-- implicit-constraint-violation detector(用 LLM extracted 的 hint)
-- budget guard
-
-### Phase 3: 高级 detector(2 周, +200 行,仅 Phase 1+2 见效后)
-
-- manual-revert(跨 session + git log join)
-- silent-retry(短时间窗相似度)
-- red-flag-hit(SKILL.md Red Flags 文本模式扫)
-- failure mode 分类(5 大类 15 子类)
+**完整 Phase 1-6 的任务清单 / 触发条件 / 死线 / 决策记录** 见 [`../ROADMAP.md`](../ROADMAP.md)
+(单点真相 + 持续更新, SPEC 本身只保留架构性决策不重复 roadmap 内容)。
 
 ## 16. 警觉的陷阱
 
