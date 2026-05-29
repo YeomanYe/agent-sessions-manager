@@ -1,0 +1,25 @@
+{
+  "name": "@agent-sessions-manager/cli",
+  "version": "0.1.0",
+  "description": "skill-recall CLI — agent log analysis for skill recall/precision tuning",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "bin": {
+    "skill-recall": "bin/skill-recall.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "doctor": "node dist/index.js doctor",
+    "run": "node dist/index.js run"
+  },
+  "dependencies": {
+    "@agent-sessions-manager/core": "workspace:*",
+    "commander": "^14.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.3",
+    "typescript": "^5.9.3"
+  }
+}

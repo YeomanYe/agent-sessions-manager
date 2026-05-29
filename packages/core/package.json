@@ -1,0 +1,20 @@
+{
+  "name": "@agent-sessions-manager/core",
+  "version": "0.1.0",
+  "description": "Shared business logic: types / loader / extractor / detector / source / cache / storage",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch"
+  },
+  "dependencies": {
+    "yaml": "^2.8.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.3",
+    "typescript": "^5.9.3"
+  }
+}
