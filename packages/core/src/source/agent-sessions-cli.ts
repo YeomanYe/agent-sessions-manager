@@ -17,14 +17,49 @@ import type {
   SessionShowResponse,
 } from "../types/session"
 
-const AGENT_SESSIONS_VENV_BIN = path.join(
-  os.homedir(),
-  "Documents/projects/agent-sessions-cli/.venv/bin/agent-sessions"
-)
+// 路径解析三层:
+//   1. env AGENT_SESSIONS_CLI_BIN          (显式覆盖)
+//   2. configured agent_sessions_cli_path  (从 config 注入, 见 setCliBinOverride)
+//   3. 自动探测 vendor/agent-sessions-cli/.venv (submodule 安装位置)
+//   4. fallback PATH 的 'agent-sessions'  (用户已全局 activate venv 时)
 
-function getCliBin(): string {
-  // Prefer venv (确定可用); fallback to PATH 用户已 activate venv 时
-  if (fs.existsSync(AGENT_SESSIONS_VENV_BIN)) return AGENT_SESSIONS_VENV_BIN
+let cliBinOverride: string | undefined
+
+/** 由 cli/index.ts 在加载 config 后注入(config.agent_sessions_cli_path) */
+export function setCliBinOverride(p: string | undefined): void {
+  cliBinOverride = p
+}
+
+function findVendorVenvBin(): string | undefined {
+  // 从 dist/source/agent-sessions-cli.js 反推 repo root:
+  //   <root>/packages/core/dist/source/agent-sessions-cli.js
+  //   → <root>/vendor/agent-sessions-cli/.venv/bin/agent-sessions
+  const candidates = [
+    path.resolve(__dirname, "../../../../vendor/agent-sessions-cli/.venv/bin/agent-sessions"),
+    // 也试一下从 cwd 起算(用户在 repo root 跑时)
+    path.join(process.cwd(), "vendor/agent-sessions-cli/.venv/bin/agent-sessions"),
+    // 老路径(已删,留作历史兜底,2026-05-30 后不再有效)
+    path.join(os.homedir(), "Documents/projects/agent-sessions-cli/.venv/bin/agent-sessions"),
+  ]
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c
+  }
+  return undefined
+}
+
+export function getCliBin(): string {
+  // 1. env override
+  const envBin = process.env.AGENT_SESSIONS_CLI_BIN
+  if (envBin && fs.existsSync(envBin)) return envBin
+
+  // 2. config override
+  if (cliBinOverride && fs.existsSync(cliBinOverride)) return cliBinOverride
+
+  // 3. vendor submodule
+  const vendor = findVendorVenvBin()
+  if (vendor) return vendor
+
+  // 4. PATH fallback
   return "agent-sessions"
 }
 

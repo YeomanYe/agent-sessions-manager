@@ -23,6 +23,8 @@ export {
   reindex,
   extractSkillCalls,
   extractUserMessages,
+  getCliBin,
+  setCliBinOverride,
 } from "./source/agent-sessions-cli"
 export type { ListSessionsOptions, SkillCallSite } from "./source/agent-sessions-cli"
 

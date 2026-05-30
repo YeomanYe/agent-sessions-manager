@@ -35,6 +35,8 @@ import {
   FindingsWriter,
   generateWeeklyReport,
   UnknownTracker,
+  getCliBin,
+  setCliBinOverride,
   type StaticExtractedPoints,
   type LlmExtractedPoints,
   type ExtractedPoints,
@@ -63,6 +65,7 @@ program
   .option("--use-llm-implicit", "Run implicit-constraint-violation detector", false)
   .action(async (opts) => {
     const config = loadConfig(opts.config)
+    setCliBinOverride(config.agent_sessions_cli_path)
     const cache = new ProcessedTracker(config.incremental.cache_path)
     const archiver = new SessionArchiver(config.storage.base_path, config.storage.enabled)
     const unknownTracker = new UnknownTracker(
@@ -255,6 +258,7 @@ program
       process.exit(2)
     }
     const config = loadConfig(opts.config)
+    setCliBinOverride(config.agent_sessions_cli_path)
     const findingsDir = path.join(config.storage.base_path, "findings")
     const registered = config.registered_skills.filter((s) => s.enabled).map((s) => s.name)
 
@@ -313,6 +317,7 @@ program
   .option("--config <path>", "Custom config path")
   .action(async (skillName: string, opts) => {
     const config = loadConfig(opts.config)
+    setCliBinOverride(config.agent_sessions_cli_path)
     if (!config.llm_fallback.enabled) {
       console.error("llm_fallback.enabled=false in config")
       process.exit(2)
@@ -348,6 +353,7 @@ program
   .action(() => {
     try {
       const config = loadConfig()
+      setCliBinOverride(config.agent_sessions_cli_path)
       console.log("✓ config loaded")
       console.log(`  registered skills: ${config.registered_skills.map((s) => s.name).join(", ")}`)
       console.log(`  storage base: ${config.storage.base_path} (enabled: ${config.storage.enabled})`)
@@ -360,6 +366,19 @@ program
       } else {
         console.log("  llm fallback: disabled")
       }
+
+      // agent-sessions-cli resolution + version
+      const bin = getCliBin()
+      console.log(`  agent-sessions-cli bin: ${bin}`)
+      try {
+        const version = execSync(`"${bin}" --version`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim()
+        console.log(`  agent-sessions-cli version: ${version}`)
+      } catch (e) {
+        console.error(`  ✗ agent-sessions-cli --version failed: ${(e as Error).message}`)
+        console.error(`    → run 'pnpm setup' to install (git submodule + venv + pip)`)
+        process.exit(1)
+      }
+
       const sessions = listSessions({ agent: "claude", limit: 1 })
       console.log(`✓ agent-sessions-cli reachable (sample session: ${sessions[0]?.short_id ?? "none"})`)
     } catch (e) {

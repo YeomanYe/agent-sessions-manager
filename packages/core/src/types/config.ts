@@ -1,6 +1,8 @@
 // skill-recall config schema (see docs/SPEC-skill-recall.md §8 + §11)
 
 export interface SkillRecallConfig {
+  /** 显式指定 agent-sessions CLI binary 路径(可选). 优先级: env AGENT_SESSIONS_CLI_BIN > 这里 > vendor/ 自动探测 > PATH */
+  agent_sessions_cli_path?: string
   storage: {
     enabled: boolean
     base_path: string  // ~ 会被 expand 到 $HOME

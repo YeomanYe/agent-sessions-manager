@@ -1,0 +1,3 @@
+[submodule "vendor/agent-sessions-cli"]
+	path = vendor/agent-sessions-cli
+	url = git@github.com:YeomanYe/agent-sessions-cli.git

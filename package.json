@@ -5,6 +5,7 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
+    "setup": "bash scripts/setup.sh",
     "build": "pnpm -r build",
     "watch": "pnpm -r --parallel watch",
     "doctor": "pnpm --filter @agent-sessions-manager/cli doctor",
