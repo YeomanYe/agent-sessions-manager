@@ -52,3 +52,9 @@ export {
 
 // Reports
 export { FindingsWriter } from "./reports/findings-writer"
+export { generateWeeklyReport } from "./reports/weekly-md"
+export type { WeeklyReportResult } from "./reports/weekly-md"
+
+// Unknown tracker (KPI)
+export { UnknownTracker } from "./unknown-tracker"
+export type { UnknownTrackerData } from "./unknown-tracker"

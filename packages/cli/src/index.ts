@@ -14,6 +14,8 @@
 
 import { Command } from "commander"
 import * as fs from "fs"
+import * as path from "path"
+import { execSync } from "child_process"
 import {
   loadConfig,
   loadSkillMd,
@@ -31,6 +33,8 @@ import {
   detectImplicitViolations,
   MinimaxClient,
   FindingsWriter,
+  generateWeeklyReport,
+  UnknownTracker,
   type StaticExtractedPoints,
   type LlmExtractedPoints,
   type ExtractedPoints,
@@ -61,6 +65,9 @@ program
     const config = loadConfig(opts.config)
     const cache = new ProcessedTracker(config.incremental.cache_path)
     const archiver = new SessionArchiver(config.storage.base_path, config.storage.enabled)
+    const unknownTracker = new UnknownTracker(
+      path.join(config.storage.base_path, ".cache/unknown-counter.json")
+    )
 
     const targetSkills = config.registered_skills
       .filter((s) => s.enabled)
@@ -162,6 +169,9 @@ program
         archiver.archive(detail)
         sessionsById.set(detail.id, detail)
 
+        // Track unknown event kinds (SPEC §3.2 卡颂方法 KPI)
+        for (const e of detail.events) unknownTracker.observe(e.kind)
+
         // Static detector
         const triggerMissFindings = detectTriggerMiss(detail, staticBySkill)
         findings.push(...triggerMissFindings)
@@ -218,8 +228,81 @@ program
       console.log(`[skill-recall] LLM calls used: ${llmClient.callsMade()}/${config.llm_fallback.budget_per_run}`)
     }
 
+    // Save unknown KPI
+    const ukCount = unknownTracker.getCurrentCount()
+    if (ukCount > 0) {
+      console.log(
+        `[skill-recall] unknown event kinds: ${ukCount} (${Object.keys(unknownTracker.getCurrentByKind()).join(", ")})`
+      )
+    }
+    unknownTracker.save()
+
     cache.markRunComplete()
   })
+
+// ─── report weekly ──────────────────────────────────────────────────────────
+
+program
+  .command("report")
+  .description("Generate reports from findings")
+  .argument("<type>", "Report type: weekly")
+  .option("--config <path>", "Custom config path")
+  .option("--since <iso>", "Override default since (default: last Monday 00:00 UTC)")
+  .option("--no-push", "Skip cc-connect IM push even if CC_SESSION_KEY is set")
+  .action((type: string, opts) => {
+    if (type !== "weekly") {
+      console.error(`Unsupported report type: ${type} (only 'weekly' for now)`)
+      process.exit(2)
+    }
+    const config = loadConfig(opts.config)
+    const findingsDir = path.join(config.storage.base_path, "findings")
+    const registered = config.registered_skills.filter((s) => s.enabled).map((s) => s.name)
+
+    // Read last unknown count for ↑↓ delta
+    const ukPath = path.join(config.storage.base_path, ".cache/unknown-counter.json")
+    const tracker = new UnknownTracker(ukPath)
+    const ukCount = tracker.getPreviousCount() ?? 0
+
+    const result = generateWeeklyReport({
+      findingsDir,
+      since: opts.since,
+      registeredSkills: registered,
+      unknownCount: ukCount,
+      lastUnknownCount: undefined,  // 历史对比留 Phase 3.6
+    })
+
+    // Resolve output path from config template
+    const week = isoWeekShort()
+    const outputPath = config.reporting.weekly_output.replace("{week}", week)
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true })
+    fs.writeFileSync(outputPath, result.markdown, "utf8")
+    console.log(`[report] weekly written: ${outputPath}`)
+    console.log(`  findings analyzed: ${result.findingsAnalyzed} (from ${result.filesAnalyzed.length} file(s))`)
+
+    // IM push (Task #63)
+    const pushEnabled = config.reporting.push_to_im && !opts.noPush && process.env.CC_SESSION_KEY
+    if (pushEnabled) {
+      try {
+        execSync(`cc-connect send --file "${outputPath}"`, {
+          stdio: ["ignore", "inherit", "inherit"],
+        })
+        console.log(`[report] pushed to IM via cc-connect`)
+      } catch (e) {
+        console.error(`[report] cc-connect push failed: ${(e as Error).message}`)
+      }
+    } else if (!process.env.CC_SESSION_KEY) {
+      console.log(`[report] CC_SESSION_KEY not set, skipping IM push`)
+    }
+  })
+
+function isoWeekShort(): string {
+  const d = new Date()
+  const target = new Date(d)
+  target.setUTCDate(target.getUTCDate() + 4 - (target.getUTCDay() || 7))
+  const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1))
+  const weekNo = Math.ceil(((target.getTime() - yearStart.getTime()) / 86400000 + 1) / 7)
+  return `${target.getUTCFullYear()}-W${String(weekNo).padStart(2, "0")}`
+}
 
 // ─── extract ────────────────────────────────────────────────────────────────
 

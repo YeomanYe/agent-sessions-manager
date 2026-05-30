@@ -2,7 +2,7 @@
 
 > 状态标记: ✅ done · 🚧 in progress · 📋 planned · 💭 idea
 >
-> 最近更新: 2026-05-30
+> 最近更新: 2026-05-30(Phase 2 + 3 shipped, Phase 4 next)
 
 ---
 
@@ -29,7 +29,7 @@
 
 ---
 
-## Phase 2 — LLM 增强(🚧 next,目标 1-2 周)
+## Phase 2 — LLM 增强(✅ shipped 2026-05-30)
 
 ### 目的
 
@@ -63,43 +63,62 @@
 
 ---
 
-## Phase 3 — 其他 detector(📋 Phase 2 见效后,2 周)
+## Phase 3 — Weekly report + IM 推送(✅ shipped 2026-05-30)
 
-按价值从高到低:
-
-| # | Detector | 用途 | 估时 |
-|---|---|---|---|
-| 3.1 | `false-trigger` | skill 启动但用户原话命中 Do NOT use | 1 天 |
-| 3.2 | `wrong-skill` | 调了 A 但用户原话明显是 B 的 trigger | 1 天 |
-| 3.3 | `step-skip` | Required Workflow 关键 step 在 events 流没出现 | 1.5 天 |
-| 3.4 | `user-aborted` | task_aborted + user_msg "不对/算了/stop" | 1 天 |
-| 3.5 | `red-flag-hit` | session 出现 SKILL.md Red Flags 描述的现象 | 1 天 |
-| 3.6 | `silent-retry` | skill 跑完用户立刻重复同样意图(短时间窗 user_msg 相似度) | 1 天 |
-| 3.7 | `manual-revert` | 24h 内 git revert 了 skill 改的文件(跨 session join) | 2 天 |
-| 3.8 | Case 7 失败模式 5 大类分类(`core/detectors/failure-classifier.ts`)| 2 天 |
-
-### 触发条件
-
-- Phase 2 LLM 跑稳(false positive rate ≤ 30% 维持 2 周)
-- 单纯 trigger-miss 不再产生新洞察
-
----
-
-## Phase 4 — Weekly report + IM 推送(📋 Phase 3 进行中可并行,1 周)
+> **2026-05-30 调换**: 原 Phase 3(8 个 detector)与原 Phase 4(报告)互换位置.
+> 理由: Phase 2 LLM 已能在现有 trigger-miss detector 上压住 FP, 先把"数据可视化 + 人能看"做出来比再加 detector 更紧迫.
 
 | # | 任务 | 估时 |
 |---|---|---|
-| 4.1 | `core/reports/weekly-md.ts` — markdown 模板(SPEC §14 报告样例) | 1 天 |
-| 4.2 | `cli/index.ts` 加 `skill-recall report weekly` 命令 | 0.5 天 |
-| 4.3 | cc-connect 推 IM(若 CC_SESSION_KEY 非空) | 0.5 天 |
-| 4.4 | 接入 auto-cmd 调度(`node-scripts/local/auto-cmd-config.json`)| 0.5 天 |
-| 4.5 | unknown 事件计数 KPI(SPEC §3.2 卡颂方法) | 1 天 |
-| 4.6 | 报告"建议候选段"(待 experience-summary / unblock-recipes 分诊) | 1 天 |
+| 3.1 | `core/reports/weekly-md.ts` — markdown 模板(SPEC §14 报告样例) | 1 天 |
+| 3.2 | `cli/index.ts` 加 `skill-recall report weekly` 命令 | 0.5 天 |
+| 3.3 | cc-connect 推 IM(若 CC_SESSION_KEY 非空) | 0.5 天 |
+| 3.4 | 接入 auto-cmd 调度(`node-scripts/local/auto-cmd-config.json`)| 0.5 天 ✅ 配置见 [Cron](#cron) |
+| 3.5 | unknown 事件计数 KPI(SPEC §3.2 卡颂方法) | 1 天 |
+| 3.6 | 报告"建议候选段"(待 experience-summary / unblock-recipes 分诊) | 1 天 |
 
 ### 触发条件
 
 - 用户开始定期看周报(每周一固定时间)
 - 或 findings ≥ 200 条 jq 查询变慢
+
+### Cron
+
+调度由 `~/Documents/projects/node-scripts/local/auto-cmd-config.json` 驱动(local/ git-ignored,这里只记备忘):
+
+```json
+{
+  "path": "~/Documents/projects/agent-sessions-manager",
+  "cmds": [
+    "node --env-file=.env packages/cli/dist/index.js run --limit 50 --use-llm-verify",
+    "test $(date +%u) -eq 1 && node --env-file=.env packages/cli/dist/index.js report weekly || echo 'skip weekly (not Monday)'"
+  ]
+}
+```
+
+每天 09:30 / 12:30 / 19:00 / 23:00 跑(跟 auto-cmd 其它 entry 同步), 仅周一额外跑 weekly report + IM 推送.
+
+---
+
+## Phase 4 — 其他 detector(🚧 next,2 周)
+
+按价值从高到低:
+
+| # | Detector | 用途 | 估时 |
+|---|---|---|---|
+| 4.1 | `false-trigger` | skill 启动但用户原话命中 Do NOT use | 1 天 |
+| 4.2 | `wrong-skill` | 调了 A 但用户原话明显是 B 的 trigger | 1 天 |
+| 4.3 | `step-skip` | Required Workflow 关键 step 在 events 流没出现 | 1.5 天 |
+| 4.4 | `user-aborted` | task_aborted + user_msg "不对/算了/stop" | 1 天 |
+| 4.5 | `red-flag-hit` | session 出现 SKILL.md Red Flags 描述的现象 | 1 天 |
+| 4.6 | `silent-retry` | skill 跑完用户立刻重复同样意图(短时间窗 user_msg 相似度) | 1 天 |
+| 4.7 | `manual-revert` | 24h 内 git revert 了 skill 改的文件(跨 session join) | 2 天 |
+| 4.8 | Case 7 失败模式 5 大类分类(`core/detectors/failure-classifier.ts`)| 2 天 |
+
+### 触发条件
+
+- Phase 3 weekly report 跑稳, 用户定期看, 反馈"只有 trigger-miss 不够"
+- 或 LLM verify FP rate ≤ 30% 维持 2 周后
 
 ---
 
