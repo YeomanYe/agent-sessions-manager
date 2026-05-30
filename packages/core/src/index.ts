@@ -34,6 +34,21 @@ export { SessionArchiver } from "./storage/session-archiver"
 
 // Detectors
 export { detectTriggerMiss } from "./detectors/trigger-miss"
+export { verifyFindingsWithLlm } from "./detectors/llm-fallback"
+export type { VerifiedFinding } from "./detectors/llm-fallback"
+export { detectImplicitViolations } from "./detectors/implicit-constraint-violation"
+
+// LLM
+export { MinimaxClient, parseFencedJson } from "./llm/minimax-client"
+export type { LlmCallResult } from "./llm/minimax-client"
+
+// Extractors (LLM)
+export {
+  extractWithLlm,
+  readExtractedCache,
+  writeExtractedCache,
+  isLlmCacheValid,
+} from "./extractors/llm-extractor"
 
 // Reports
 export { FindingsWriter } from "./reports/findings-writer"

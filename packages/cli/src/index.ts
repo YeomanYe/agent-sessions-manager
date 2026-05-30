@@ -3,35 +3,48 @@
 //
 // 命令:
 //   skill-recall run [--full] [--skill <name>] [--config <path>] [--dry-run]
-//   skill-recall extract <skill-name> [--rerun]
+//                    [--use-llm-extract] [--use-llm-verify] [--use-llm-implicit]
+//   skill-recall extract <skill-name> [--rerun]   # 单独跑 LLM 提取
 //   skill-recall doctor
 //
-// MVP scope (Phase 1):
-// - static extractor + trigger-miss detector
-// - LLM extractor / 其他 detector → Phase 2
+// Phase 2 LLM 流程(--use-llm-* 开启):
+//   1. extract 阶段: 静态 + LLM 双路, LLM 输出缓存到 extracted/<skill>.json
+//   2. detect 阶段: 程序化 detector 跑完后, LLM verify 对 unclear 的二次判定
+//   3. implicit-constraint-violation detector: 用 LLM extracted 的 hint 扫 session
 
 import { Command } from "commander"
 import * as fs from "fs"
-import * as path from "path"
 import {
   loadConfig,
   loadSkillMd,
   extractStatic,
+  extractWithLlm,
+  readExtractedCache,
+  writeExtractedCache,
+  isLlmCacheValid,
   listSessions,
   showSession,
   ProcessedTracker,
   SessionArchiver,
   detectTriggerMiss,
+  verifyFindingsWithLlm,
+  detectImplicitViolations,
+  MinimaxClient,
   FindingsWriter,
   type StaticExtractedPoints,
+  type LlmExtractedPoints,
+  type ExtractedPoints,
   type Finding,
+  type SessionDetail,
 } from "@agent-sessions-manager/core"
 
 const program = new Command()
 program
   .name("skill-recall")
   .description("Agent log analysis for skill recall/precision tuning")
-  .version("0.1.0")
+  .version("0.2.0")
+
+// ─── run ────────────────────────────────────────────────────────────────────
 
 program
   .command("run")
@@ -41,12 +54,14 @@ program
   .option("--config <path>", "Custom config path")
   .option("--dry-run", "Compute but do not write findings", false)
   .option("--limit <n>", "Cap sessions analyzed (debug)", parseIntOpt)
+  .option("--use-llm-extract", "Run LLM extractor (cached by SKILL.md hash)", false)
+  .option("--use-llm-verify", "Verify findings via LLM (filter false positives)", false)
+  .option("--use-llm-implicit", "Run implicit-constraint-violation detector", false)
   .action(async (opts) => {
     const config = loadConfig(opts.config)
     const cache = new ProcessedTracker(config.incremental.cache_path)
     const archiver = new SessionArchiver(config.storage.base_path, config.storage.enabled)
 
-    // 1. Extract points for each registered skill (static only in Phase 1)
     const targetSkills = config.registered_skills
       .filter((s) => s.enabled)
       .filter((s) => !opts.skill || s.name === opts.skill)
@@ -55,19 +70,66 @@ program
       process.exit(2)
     }
 
+    // LLM client (lazy — only create if any --use-llm-* flag is set)
+    const llmNeeded = opts.useLlmExtract || opts.useLlmVerify || opts.useLlmImplicit
+    let llmClient: MinimaxClient | undefined
+    if (llmNeeded) {
+      if (!config.llm_fallback.enabled) {
+        console.error("LLM flags passed but llm_fallback.enabled=false in config")
+        process.exit(2)
+      }
+      try {
+        llmClient = new MinimaxClient(config.llm_fallback)
+        console.log(
+          `[skill-recall] LLM enabled: ${config.llm_fallback.model}, budget ${config.llm_fallback.budget_per_run}`
+        )
+      } catch (e) {
+        console.error("LLM init failed:", (e as Error).message)
+        process.exit(2)
+      }
+    }
+
+    // 1. Extract points
     console.log(`[skill-recall] extracting points for ${targetSkills.length} skill(s)…`)
-    const pointsBySkill: Record<string, StaticExtractedPoints> = {}
+    const staticBySkill: Record<string, StaticExtractedPoints> = {}
+    const llmBySkill: Record<string, LlmExtractedPoints> = {}
+
     for (const s of targetSkills) {
       try {
         const loaded = loadSkillMd(s.name)
-        const points = extractStatic(loaded)
-        // 合并 extra_triggers / extra_red_flags(手动补充)
-        if (s.extra_triggers) points.trigger_phrases.push(...s.extra_triggers)
-        if (s.extra_red_flags) points.red_flags.push(...s.extra_red_flags)
-        pointsBySkill[s.name] = points
-        cacheExtracted(config.storage.base_path, points)
+        const staticPoints = extractStatic(loaded)
+        if (s.extra_triggers) staticPoints.trigger_phrases.push(...s.extra_triggers)
+        if (s.extra_red_flags) staticPoints.red_flags.push(...s.extra_red_flags)
+        staticBySkill[s.name] = staticPoints
+
+        let llmPoints: LlmExtractedPoints | undefined
+        const cached = readExtractedCache(config.storage.base_path, s.name)
+        if (
+          opts.useLlmExtract &&
+          s.use_llm_extraction &&
+          llmClient &&
+          !llmClient.isBudgetExceeded()
+        ) {
+          if (isLlmCacheValid(cached, loaded.git_hash)) {
+            llmPoints = cached!.llm
+            console.log(`  ${s.name} (LLM cache hit)`)
+          } else {
+            console.log(`  ${s.name} → LLM extracting…`)
+            llmPoints = await extractWithLlm(loaded, llmClient)
+          }
+          if (llmPoints) llmBySkill[s.name] = llmPoints
+        } else if (cached?.llm) {
+          llmBySkill[s.name] = cached.llm
+        }
+
+        const data: ExtractedPoints = { static: staticPoints, llm: llmPoints ?? cached?.llm }
+        writeExtractedCache(config.storage.base_path, s.name, data)
+
+        const llmTag = data.llm
+          ? ` | LLM ${data.llm.implicit_constraints.length}/${data.llm.hidden_anti_patterns.length}/${data.llm.downstream_handoff_required.length}`
+          : ""
         console.log(
-          `  ${s.name}: ${points.trigger_phrases.length} triggers, ${points.do_not_use_phrases.length} do-not-use, ${points.red_flags.length} red-flags, ${points.workflow_steps.length} steps`
+          `  ${s.name}: ${staticPoints.trigger_phrases.length}t/${staticPoints.do_not_use_phrases.length}d/${staticPoints.red_flags.length}r/${staticPoints.workflow_steps.length}s${llmTag}`
         )
       } catch (e) {
         console.error(`  ${s.name}: extract failed — ${(e as Error).message}`)
@@ -85,7 +147,8 @@ program
     console.log(`  found ${sessions.length} session(s)`)
 
     // 3. For each session: show → archive → detect
-    const findings: Finding[] = []
+    let findings: Finding[] = []
+    const sessionsById = new Map<string, SessionDetail>()
     let processedCount = 0
     let skippedCount = 0
 
@@ -97,9 +160,20 @@ program
       try {
         const detail = showSession(list.id, list.source)
         archiver.archive(detail)
+        sessionsById.set(detail.id, detail)
 
-        const sessionFindings = detectTriggerMiss(detail, pointsBySkill)
-        findings.push(...sessionFindings)
+        // Static detector
+        const triggerMissFindings = detectTriggerMiss(detail, staticBySkill)
+        findings.push(...triggerMissFindings)
+
+        // Implicit constraint detector (LLM-driven)
+        if (opts.useLlmImplicit && llmClient && !llmClient.isBudgetExceeded()) {
+          for (const [skillName, llmPoints] of Object.entries(llmBySkill)) {
+            if (!llmPoints.implicit_constraints.length) continue
+            const r = await detectImplicitViolations(detail, skillName, llmPoints, llmClient, 2)
+            findings.push(...r.findings)
+          }
+        }
 
         cache.markProcessed(list.id)
         processedCount++
@@ -109,10 +183,20 @@ program
     }
 
     console.log(
-      `[skill-recall] processed ${processedCount}, skipped ${skippedCount} (already in cache), findings: ${findings.length}`
+      `[skill-recall] processed ${processedCount}, skipped ${skippedCount} (cache), findings: ${findings.length}`
     )
 
-    // 4. Write findings (unless --dry-run)
+    // 4. LLM verify pass (二次过滤 false positive)
+    if (opts.useLlmVerify && llmClient && findings.length > 0) {
+      const before = findings.length
+      console.log(`[skill-recall] LLM verifying ${before} findings…`)
+      const r = await verifyFindingsWithLlm(findings, sessionsById, llmClient)
+      findings = r.verified
+      const fpCount = findings.filter((f) => "llm_verdict" in f && (f as { llm_verdict: string }).llm_verdict === "false-positive").length
+      console.log(`  LLM calls: ${r.calls}, marked false-positive: ${fpCount}`)
+    }
+
+    // 5. Write findings
     if (!opts.dryRun && findings.length > 0) {
       const writer = new FindingsWriter(config.storage.base_path)
       const result = writer.write(findings)
@@ -120,17 +204,60 @@ program
     } else if (opts.dryRun) {
       console.log(`  (dry-run, findings not written)`)
       if (findings.length > 0) {
-        console.log("  sample:")
+        console.log("  sample (first 5):")
         for (const f of findings.slice(0, 5)) {
+          const verdict = "llm_verdict" in f ? ` [${(f as { llm_verdict: string }).llm_verdict}]` : ""
           console.log(
-            `    [${f.type}] ${f.skill} — ${f.description.slice(0, 80)} (conf ${f.confidence})`
+            `    [${f.type}]${verdict} ${f.skill} — ${f.description.slice(0, 70)} (conf ${f.confidence.toFixed(2)})`
           )
         }
       }
     }
 
+    if (llmClient) {
+      console.log(`[skill-recall] LLM calls used: ${llmClient.callsMade()}/${config.llm_fallback.budget_per_run}`)
+    }
+
     cache.markRunComplete()
   })
+
+// ─── extract ────────────────────────────────────────────────────────────────
+
+program
+  .command("extract <skill-name>")
+  .description("Extract LLM points for a single skill (force re-run with --rerun)")
+  .option("--rerun", "Ignore cache and re-extract", false)
+  .option("--config <path>", "Custom config path")
+  .action(async (skillName: string, opts) => {
+    const config = loadConfig(opts.config)
+    if (!config.llm_fallback.enabled) {
+      console.error("llm_fallback.enabled=false in config")
+      process.exit(2)
+    }
+    const client = new MinimaxClient(config.llm_fallback)
+    const loaded = loadSkillMd(skillName)
+    const staticPoints = extractStatic(loaded)
+
+    const cached = readExtractedCache(config.storage.base_path, skillName)
+    if (!opts.rerun && isLlmCacheValid(cached, loaded.git_hash)) {
+      console.log(`[extract] cache hit for ${skillName} (git hash ${loaded.git_hash?.slice(0, 8)})`)
+      console.log(JSON.stringify(cached!.llm, null, 2))
+      return
+    }
+
+    console.log(`[extract] running LLM for ${skillName}…`)
+    const llmPoints = await extractWithLlm(loaded, client)
+    writeExtractedCache(config.storage.base_path, skillName, {
+      static: staticPoints,
+      llm: llmPoints,
+    })
+    console.log(
+      `[extract] ${skillName}: ${llmPoints.implicit_constraints.length} constraints, ${llmPoints.hidden_anti_patterns.length} anti-patterns, ${llmPoints.downstream_handoff_required.length} handoffs`
+    )
+    console.log(JSON.stringify(llmPoints, null, 2))
+  })
+
+// ─── doctor ─────────────────────────────────────────────────────────────────
 
 program
   .command("doctor")
@@ -144,7 +271,9 @@ program
       console.log(`  cache: ${config.incremental.cache_path}`)
       if (config.llm_fallback.enabled) {
         const keySet = !!process.env[config.llm_fallback.api_key_env]
-        console.log(`  llm fallback: ${config.llm_fallback.provider} (key: ${keySet ? "set" : "MISSING"})`)
+        console.log(
+          `  llm fallback: ${config.llm_fallback.provider} ${config.llm_fallback.model} (key: ${keySet ? "set" : "MISSING"})`
+        )
       } else {
         console.log("  llm fallback: disabled")
       }
@@ -169,16 +298,9 @@ function parseIntOpt(v: string): number {
 function computeSince(cache: ProcessedTracker, fallback: string): string {
   const last = cache.getLastRunAt()
   if (last) return last
-  // fallback "7d" / "30d"
   const m = fallback.match(/^(\d+)d$/)
   const days = m ? parseInt(m[1], 10) : 7
   const t = new Date()
   t.setUTCDate(t.getUTCDate() - days)
   return t.toISOString()
-}
-
-function cacheExtracted(basePath: string, points: StaticExtractedPoints): void {
-  const file = path.join(basePath, "extracted", `${points.skill_name}.json`)
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, JSON.stringify({ static: points }, null, 2), "utf8")
 }
