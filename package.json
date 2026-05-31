@@ -9,10 +9,12 @@
     "build": "pnpm -r build",
     "watch": "pnpm -r --parallel watch",
     "doctor": "pnpm --filter @agent-sessions-manager/cli doctor",
-    "run:incr": "pnpm --filter @agent-sessions-manager/cli run --limit 100"
+    "run:incr": "pnpm --filter @agent-sessions-manager/cli run --limit 100",
+    "dev:webui": "concurrently -n server,webui -c blue,green \"pnpm --filter @agent-sessions-manager/webui-server dev\" \"pnpm --filter @agent-sessions-manager/webui dev\""
   },
   "devDependencies": {
     "@types/node": "^25.0.3",
+    "concurrently": "^9.1.0",
     "typescript": "^5.9.3"
   },
   "engines": {

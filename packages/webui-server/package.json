@@ -1,0 +1,27 @@
+{
+  "name": "@agent-sessions-manager/webui-server",
+  "version": "0.1.0",
+  "description": "Local Hono server feeding the webui — read-only access to findings/sessions/skills",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/server.js",
+  "bin": {
+    "skill-recall-server": "bin/server.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@agent-sessions-manager/core": "workspace:*",
+    "@hono/node-server": "^1.13.7",
+    "hono": "^4.6.12"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.3"
+  }
+}

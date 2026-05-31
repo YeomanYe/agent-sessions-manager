@@ -106,6 +106,26 @@ node --env-file=.env packages/cli/dist/index.js report weekly
 pnpm doctor
 ```
 
+## webui (Stage A, read-only)
+
+浏览 findings + sessions + extracted skill points 的本地 webui.
+**read-only**, 还不能人工打标(Stage B 加).
+
+```bash
+# 一键启 Hono server (:5174) + Vite dev (:5173)
+pnpm dev:webui
+
+# 浏览器打开
+open http://localhost:5173
+```
+
+3 个页面:
+- `/` Findings Inspector — filter (skill / type / LLM verdict) + 列表 + 详情 split
+- `/sessions/:id` Session Viewer — events timeline, 高亮 event_index 上下文
+- `/skills` Skills Overview — 4 个 starter skill 的 trigger / Red Flags / LLM implicit_constraints
+
+API 接口规范见 [`docs/SPEC-webui-stage-a.md`](./docs/SPEC-webui-stage-a.md).
+
 ---
 
 ## Architecture

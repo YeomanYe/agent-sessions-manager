@@ -2,7 +2,7 @@
 
 > 状态标记: ✅ done · 🚧 in progress · 📋 planned · 💭 idea
 >
-> 最近更新: 2026-05-30(Phase 2 + 3 shipped, Phase 4 next)
+> 最近更新: 2026-05-30(Phase 2 / 3 / 5A shipped, Phase 4 next)
 
 ---
 
@@ -122,16 +122,37 @@
 
 ---
 
-## Phase 5 — webui(💭 future)
+## Phase 5 — webui
 
-**不开始的现状**: Phase 1-4 用 markdown + grep + jq 处理足够.
+### Stage A — MVP read-only(✅ shipped 2026-05-30)
 
-### 启动触发条件(任一即可)
+| # | 组件 | 状态 |
+|---|---|---|
+| 5A.1 | `packages/webui-server` — Hono local API (:5174) | ✅ /api/findings + /api/sessions/:id + /api/skills + /api/health |
+| 5A.2 | `packages/webui` — Vite + React + TanStack Query + Tailwind (:5173) | ✅ |
+| 5A.3 | Findings Inspector page | ✅ filter (skill/type/llm_verdict) + 分页 + split-pane 详情 |
+| 5A.4 | Session Viewer page | ✅ events timeline + 高亮 event_index ±3 上下文 |
+| 5A.5 | Skills Overview page | ✅ 4 starter skill 卡片(static + LLM 提取浏览) |
+| 5A.6 | `pnpm dev:webui` 一键启 server+vite | ✅ concurrently |
 
-1. `findings/*.jsonl` 累积 > 1000 行,grep/jq 翻找不便
-2. Phase 2 LLM 提取需要**人工 review 抽样**(校验幻觉)
-3. 多人 / 多机器协作 review 出现
-4. 想做"标记某 finding 为已处理 / false positive / 已沉淀"等状态机
+**实测**:`pnpm build` 4 packages OK / vite build 96 modules 96KB gzip / curl 验证 95 findings 通过 vite proxy 取到.
+
+详细 spec: [`docs/SPEC-webui-stage-a.md`](./docs/SPEC-webui-stage-a.md)
+
+### Stage B — Review 状态机(📋 next webui phase)
+
+| 任务 |
+|---|
+| POST /api/reviews/:finding_id (status: confirmed / dismissed / triaged) |
+| reviews/ append-only 持久化(独立目录, 不污染 findings/) |
+| webui findings 列表加 status filter + 一键打标按钮 |
+| LLM verdict 推翻按钮 + 推翻原因记录 |
+
+### Stage C — 时间序列 / 跨周对比(💭 long-term)
+
+- skill FP rate 历史曲线
+- SKILL.md git log ↔ FP rate 关联("hat 改 description 后 FP 从 91% 降到 X")
+- 跨 starter skill 共同失败模式聚类
 
 ### 不会做的事
 
