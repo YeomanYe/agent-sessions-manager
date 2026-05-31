@@ -6,6 +6,9 @@ import { FindingDetail } from "../components/FindingDetail"
 import { cn } from "../lib/cn"
 
 const PAGE_SIZE = 50
+const GROUPED_LIMIT = 10000  // 分组视图一次性拉全(MVP, 数据量小)
+
+type ViewMode = "session" | "flat"
 
 export function FindingsPage() {
   const [params, setParams] = useSearchParams()
@@ -15,17 +18,18 @@ export function FindingsPage() {
   const type = params.get("type") ?? ""
   const llmVerdict = params.get("llm_verdict") ?? ""
   const offset = Number(params.get("offset") ?? 0)
+  const view: ViewMode = (params.get("view") as ViewMode) || "session"
 
   const facetsQ = useQuery({ queryKey: ["facets"], queryFn: fetchFacets })
   const findingsQ = useQuery({
-    queryKey: ["findings", skill, type, llmVerdict, offset],
+    queryKey: ["findings", skill, type, llmVerdict, view === "flat" ? offset : "all"],
     queryFn: () =>
       fetchFindings({
         skill: skill || undefined,
         type: type || undefined,
         llm_verdict: llmVerdict || undefined,
-        limit: PAGE_SIZE,
-        offset,
+        limit: view === "flat" ? PAGE_SIZE : GROUPED_LIMIT,
+        offset: view === "flat" ? offset : 0,
       }),
   })
 
@@ -33,6 +37,11 @@ export function FindingsPage() {
     () => findingsQ.data?.findings.find((f) => f._id === selectedId),
     [findingsQ.data, selectedId]
   )
+
+  const grouped = useMemo(() => {
+    if (!findingsQ.data || view !== "session") return null
+    return groupBySession(findingsQ.data.findings)
+  }, [findingsQ.data, view])
 
   const updateParam = (k: string, v: string) => {
     const next = new URLSearchParams(params)
@@ -48,6 +57,15 @@ export function FindingsPage() {
     if (newOffset > 0) next.set("offset", String(newOffset))
     else next.delete("offset")
     setParams(next)
+  }
+
+  const switchView = (v: ViewMode) => {
+    const next = new URLSearchParams(params)
+    if (v === "flat") next.set("view", "flat")
+    else next.delete("view")  // session is default, omit from URL
+    next.delete("offset")
+    setParams(next)
+    setSelectedId(null)
   }
 
   return (
@@ -73,8 +91,35 @@ export function FindingsPage() {
             options={facetsQ.data?.llm_verdicts ?? []}
             onChange={(v) => updateParam("llm_verdict", v)}
           />
-          <div className="ml-auto text-xs text-muted">
-            {findingsQ.data ? `${findingsQ.data.total} total` : "loading…"}
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] uppercase text-muted">view</label>
+            <div className="flex border border-border rounded-md overflow-hidden">
+              <button
+                onClick={() => switchView("session")}
+                className={cn(
+                  "px-3 py-1 text-sm transition",
+                  view === "session" ? "bg-accent text-white" : "bg-white hover:bg-neutral-50"
+                )}
+              >
+                by session
+              </button>
+              <button
+                onClick={() => switchView("flat")}
+                className={cn(
+                  "px-3 py-1 text-sm transition border-l border-border",
+                  view === "flat" ? "bg-accent text-white" : "bg-white hover:bg-neutral-50"
+                )}
+              >
+                flat
+              </button>
+            </div>
+          </div>
+          <div className="ml-auto text-xs text-muted self-end pb-1">
+            {findingsQ.data
+              ? view === "session" && grouped
+                ? `${findingsQ.data.findings.length} findings · ${grouped.length} sessions`
+                : `${findingsQ.data.total} total`
+              : "loading…"}
           </div>
         </div>
 
@@ -86,19 +131,35 @@ export function FindingsPage() {
           {findingsQ.data?.findings.length === 0 && (
             <div className="p-4 text-muted">no findings match the filter</div>
           )}
-          <ul className="divide-y divide-border">
-            {findingsQ.data?.findings.map((f) => (
-              <FindingRow
-                key={f._id}
-                finding={f}
-                selected={f._id === selectedId}
-                onSelect={() => setSelectedId(f._id)}
-              />
-            ))}
-          </ul>
+
+          {view === "flat" && (
+            <ul className="divide-y divide-border">
+              {findingsQ.data?.findings.map((f) => (
+                <FindingRow
+                  key={f._id}
+                  finding={f}
+                  selected={f._id === selectedId}
+                  onSelect={() => setSelectedId(f._id)}
+                />
+              ))}
+            </ul>
+          )}
+
+          {view === "session" && grouped && (
+            <ul className="divide-y divide-border">
+              {grouped.map((g) => (
+                <SessionGroup
+                  key={g.session_id}
+                  group={g}
+                  selectedId={selectedId}
+                  onSelect={setSelectedId}
+                />
+              ))}
+            </ul>
+          )}
         </div>
 
-        {findingsQ.data && findingsQ.data.total > PAGE_SIZE && (
+        {view === "flat" && findingsQ.data && findingsQ.data.total > PAGE_SIZE && (
           <div className="flex items-center justify-center gap-2">
             <button
               className="btn"
@@ -130,6 +191,98 @@ export function FindingsPage() {
         )}
       </aside>
     </div>
+  )
+}
+
+// ─── group-by-session helpers ──────────────────────────────────────────────
+
+interface SessionGroupData {
+  session_id: string
+  source: string
+  /** 按 event_index 升序 */
+  findings: IdentifiedFinding[]
+  /** finding type → count (用于 group header 概览) */
+  typeCounts: Record<string, number>
+  /** earliest detected_at, 用于跨 group 排序 */
+  earliestDetectedAt: string
+}
+
+function groupBySession(findings: IdentifiedFinding[]): SessionGroupData[] {
+  const map = new Map<string, SessionGroupData>()
+  for (const f of findings) {
+    let g = map.get(f.session_id)
+    if (!g) {
+      g = {
+        session_id: f.session_id,
+        source: f.source,
+        findings: [],
+        typeCounts: {},
+        earliestDetectedAt: f.detected_at,
+      }
+      map.set(f.session_id, g)
+    }
+    g.findings.push(f)
+    g.typeCounts[f.type] = (g.typeCounts[f.type] ?? 0) + 1
+    if (f.detected_at < g.earliestDetectedAt) g.earliestDetectedAt = f.detected_at
+  }
+  // session 内按 event_index 升序(跟 session 时间线一致), 无 event_index 放最后
+  for (const g of map.values()) {
+    g.findings.sort((a, b) => {
+      const ai = a.event_index ?? Number.MAX_SAFE_INTEGER
+      const bi = b.event_index ?? Number.MAX_SAFE_INTEGER
+      return ai - bi
+    })
+  }
+  // group 之间按最早 finding 时间倒序(最近的 session 在上)
+  return [...map.values()].sort(
+    (a, b) => Date.parse(b.earliestDetectedAt) - Date.parse(a.earliestDetectedAt)
+  )
+}
+
+// ─── components ──────────────────────────────────────────────────────────
+
+function SessionGroup({
+  group,
+  selectedId,
+  onSelect,
+}: {
+  group: SessionGroupData
+  selectedId: string | null
+  onSelect: (id: string) => void
+}) {
+  return (
+    <li className="bg-neutral-50/50">
+      <details open className="group">
+        <summary className="px-3 py-2 cursor-pointer flex items-center gap-2 hover:bg-neutral-100 text-sm">
+          <span className="font-mono text-muted text-xs">{group.session_id.slice(0, 8)}</span>
+          <span className="badge text-[10px]">{group.source}</span>
+          <span className="text-xs text-muted">
+            {group.findings.length} finding{group.findings.length > 1 ? "s" : ""}
+          </span>
+          <div className="flex gap-1">
+            {Object.entries(group.typeCounts).map(([type, n]) => (
+              <span key={type} className="badge text-[10px] font-mono">
+                {type} × {n}
+              </span>
+            ))}
+          </div>
+          <span className="ml-auto text-[10px] text-muted">
+            {group.earliestDetectedAt.slice(0, 16).replace("T", " ")}
+          </span>
+        </summary>
+        <ul className="divide-y divide-border bg-white">
+          {group.findings.map((f) => (
+            <FindingRow
+              key={f._id}
+              finding={f}
+              selected={f._id === selectedId}
+              onSelect={() => onSelect(f._id)}
+              indented
+            />
+          ))}
+        </ul>
+      </details>
+    </li>
   )
 }
 
@@ -167,16 +320,19 @@ function FindingRow({
   finding,
   selected,
   onSelect,
+  indented = false,
 }: {
   finding: IdentifiedFinding
   selected: boolean
   onSelect: () => void
+  indented?: boolean
 }) {
   return (
     <li
       onClick={onSelect}
       className={cn(
         "p-3 cursor-pointer hover:bg-neutral-50 transition",
+        indented && "pl-8",
         selected && "bg-blue-50 hover:bg-blue-50"
       )}
     >
@@ -184,9 +340,10 @@ function FindingRow({
         <span className="badge font-mono">{finding.type}</span>
         <span className="text-sm font-semibold">{finding.skill}</span>
         <VerdictBadge verdict={finding.llm_verdict} />
-        <span className="ml-auto text-xs text-muted">
-          conf {finding.confidence.toFixed(2)}
-        </span>
+        {finding.event_index !== undefined && (
+          <span className="text-xs text-muted font-mono">event {finding.event_index}</span>
+        )}
+        <span className="ml-auto text-xs text-muted">conf {finding.confidence.toFixed(2)}</span>
       </div>
       <p className="text-sm text-foreground/80 line-clamp-2">{finding.description}</p>
       {finding.user_msg_snippet && (
