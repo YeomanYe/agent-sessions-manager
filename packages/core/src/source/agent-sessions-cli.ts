@@ -153,7 +153,40 @@ export function extractSkillCalls(detail: SessionDetail): SkillCallSite[] {
   return out
 }
 
-/** 抓 session 里所有真正的"用户原话"事件(排除 tool result 等系统注入) */
+/**
+ * 系统注入的"伪用户消息"前缀模式 — 这些 text 走 kind=user 但不是用户真说的话.
+ *
+ * 来源(2026-06-01 实测 95 条 Phase 1 finding 100% 命中以下模式):
+ *   - <observed_from_primary_session>  — claude-mem / memory agent 注入
+ *   - --- MODE SWITCH: PROGRESS SUMMARY ---  — Claude Code 内部 mode 切换
+ *   - Hello memory agent  — 子 agent 启动 prompt
+ *   - <task-notification>  — cc-connect / 系统通知
+ *   - [tool result:  — tool 调用返回
+ *   - Launching skill:  — skill 调度文本
+ *   - Base directory for this skill:  — skill 启动元信息
+ *
+ * 任何匹配以下任一前缀的 user message 直接跳过, 不算"用户原话".
+ */
+const SYSTEM_INJECTED_PREFIXES = [
+  "[tool result:",
+  "Launching skill:",
+  "Base directory for this skill:",
+  "<observed_from_primary_session>",
+  "<observed_from_",  // 防御性: 兼容未来 observed_from_xxx 变体
+  "<task-notification>",
+  "--- MODE SWITCH",
+  "Hello memory agent",
+] as const
+
+function isSystemInjectedUserMessage(text: string): boolean {
+  const trimmed = text.trimStart()
+  for (const prefix of SYSTEM_INJECTED_PREFIXES) {
+    if (trimmed.startsWith(prefix)) return true
+  }
+  return false
+}
+
+/** 抓 session 里所有真正的"用户原话"事件(排除 tool result / memory agent / system notification 等注入) */
 export function extractUserMessages(
   detail: SessionDetail
 ): Array<{ index: number; event_id: string; text: string; timestamp: string | null }> {
@@ -163,14 +196,8 @@ export function extractUserMessages(
     const e = detail.events[i]
     if (e.kind !== "user") continue
     const text = e.text ?? ""
-    // 过滤掉 tool result / skill launch 等"非真用户文本"
-    if (
-      text.startsWith("[tool result:") ||
-      text.startsWith("Launching skill:") ||
-      text.startsWith("Base directory for this skill:")
-    )
-      continue
     if (!text.trim()) continue
+    if (isSystemInjectedUserMessage(text)) continue
     out.push({ index: i, event_id: e.id, text, timestamp: e.timestamp })
   }
   return out
