@@ -7,6 +7,7 @@ export type * from "./types/config"
 export type * from "./types/session"
 export type * from "./types/extracted-points"
 export type * from "./types/finding"
+export type * from "./types/review"
 
 // Loaders
 export { loadConfig } from "./loader/config-loader"
@@ -60,3 +61,6 @@ export type { WeeklyReportResult } from "./reports/weekly-md"
 // Unknown tracker (KPI)
 export { UnknownTracker } from "./unknown-tracker"
 export type { UnknownTrackerData } from "./unknown-tracker"
+
+// Reviews store (Stage B-1)
+export { ReviewsStore } from "./reviews/store"

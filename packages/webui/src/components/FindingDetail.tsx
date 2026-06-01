@@ -1,5 +1,38 @@
 import { Link } from "react-router-dom"
-import type { IdentifiedFinding } from "../lib/api"
+import { useState, useEffect } from "react"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
+import {
+  upsertReview,
+  deleteReview,
+  type IdentifiedFinding,
+  type ReviewStatus,
+} from "../lib/api"
+import { cn } from "../lib/cn"
+
+const STATUS_LABELS: Record<ReviewStatus, { label: string; help: string; cls: string }> = {
+  correct: {
+    label: "correct",
+    help: "agent 响应正确, finding 是误报",
+    cls: "badge-success",
+  },
+  "agent-error": {
+    label: "agent-error",
+    help: "agent 错了, finding 是真问题",
+    cls: "badge-danger",
+  },
+  unclear: {
+    label: "unclear",
+    help: "信息不够 / 模糊场景",
+    cls: "badge-warning",
+  },
+  triaged: {
+    label: "triaged",
+    help: "已经处理过 (改了 SKILL.md / 加到错题本)",
+    cls: "badge",
+  },
+}
+
+const STATUSES: ReviewStatus[] = ["correct", "agent-error", "unclear", "triaged"]
 
 export function FindingDetail({ finding }: { finding: IdentifiedFinding }) {
   const jumpHref = finding.event_index !== undefined
@@ -12,6 +45,11 @@ export function FindingDetail({ finding }: { finding: IdentifiedFinding }) {
         <span className="badge font-mono">{finding.type}</span>
         <span className="text-base font-semibold">{finding.skill}</span>
         <Verdict verdict={finding.llm_verdict} />
+        {finding._review_status && (
+          <span className={cn("badge", STATUS_LABELS[finding._review_status].cls)}>
+            ✓ {STATUS_LABELS[finding._review_status].label}
+          </span>
+        )}
       </div>
 
       <Field label="Description" value={finding.description} />
@@ -49,6 +87,9 @@ export function FindingDetail({ finding }: { finding: IdentifiedFinding }) {
         </div>
       )}
 
+      {/* ─── Review widget (Stage B-1) ─── */}
+      <ReviewWidget finding={finding} />
+
       <div className="flex gap-2 pt-2">
         <Link to={jumpHref} className="btn btn-primary">
           → jump to session
@@ -61,6 +102,101 @@ export function FindingDetail({ finding }: { finding: IdentifiedFinding }) {
           {JSON.stringify(finding, null, 2)}
         </pre>
       </details>
+    </div>
+  )
+}
+
+function ReviewWidget({ finding }: { finding: IdentifiedFinding }) {
+  const qc = useQueryClient()
+  // Local form state (sync from prop on finding change)
+  const [status, setStatus] = useState<ReviewStatus | "">(finding._review_status ?? "")
+  const [notes, setNotes] = useState<string>(finding._review_notes ?? "")
+
+  useEffect(() => {
+    setStatus(finding._review_status ?? "")
+    setNotes(finding._review_notes ?? "")
+  }, [finding._id, finding._review_status, finding._review_notes])
+
+  const saveMutation = useMutation({
+    mutationFn: () => {
+      if (!status) throw new Error("status required")
+      return upsertReview(finding._id, { status, notes: notes.trim() || undefined })
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["findings"] })
+      qc.invalidateQueries({ queryKey: ["facets"] })
+    },
+  })
+
+  const removeMutation = useMutation({
+    mutationFn: () => deleteReview(finding._id),
+    onSuccess: () => {
+      setStatus("")
+      setNotes("")
+      qc.invalidateQueries({ queryKey: ["findings"] })
+      qc.invalidateQueries({ queryKey: ["facets"] })
+    },
+  })
+
+  return (
+    <div className="border border-border rounded p-3 bg-yellow-50/30 space-y-2">
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] uppercase text-muted font-semibold">Review</span>
+        {finding._review_status && (
+          <span className="text-[10px] text-muted">(已 review,可改)</span>
+        )}
+      </div>
+
+      <div className="flex flex-wrap gap-x-3 gap-y-1.5">
+        {STATUSES.map((s) => (
+          <label key={s} className="inline-flex items-center gap-1 cursor-pointer text-sm">
+            <input
+              type="radio"
+              name={`status-${finding._id}`}
+              checked={status === s}
+              onChange={() => setStatus(s)}
+              className="accent-accent"
+            />
+            <span className={cn("badge", STATUS_LABELS[s].cls, "text-xs")}>
+              {STATUS_LABELS[s].label}
+            </span>
+            <span className="text-[10px] text-muted">{STATUS_LABELS[s].help}</span>
+          </label>
+        ))}
+      </div>
+
+      <textarea
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        placeholder="notes (optional): 为什么这样标 / 改了哪个 SKILL.md / 加了哪条错题本…"
+        className="input w-full font-mono text-xs"
+        rows={2}
+      />
+
+      <div className="flex items-center gap-2">
+        <button
+          className="btn btn-primary"
+          disabled={!status || saveMutation.isPending}
+          onClick={() => saveMutation.mutate()}
+        >
+          {saveMutation.isPending ? "saving…" : finding._review_status ? "update review" : "save review"}
+        </button>
+        {finding._review_status && (
+          <button
+            className="btn"
+            disabled={removeMutation.isPending}
+            onClick={() => removeMutation.mutate()}
+          >
+            {removeMutation.isPending ? "removing…" : "remove review"}
+          </button>
+        )}
+        {saveMutation.isError && (
+          <span className="text-xs text-danger">save failed: {String(saveMutation.error)}</span>
+        )}
+        {removeMutation.isError && (
+          <span className="text-xs text-danger">remove failed: {String(removeMutation.error)}</span>
+        )}
+      </div>
     </div>
   )
 }

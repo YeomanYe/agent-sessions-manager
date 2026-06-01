@@ -2,7 +2,7 @@
 
 > 状态标记: ✅ done · 🚧 in progress · 📋 planned · 💭 idea
 >
-> 最近更新: 2026-05-30(Phase 2 / 3 / 5A shipped, Phase 4 next)
+> 最近更新: 2026-06-01(webui Stage B-1 review 状态机 shipped, B-2 pattern 批量打标和 B-3 全维度打标按需推进, Phase 4 detector 仍 next)
 
 ---
 
@@ -139,14 +139,44 @@
 
 详细 spec: [`docs/SPEC-webui-stage-a.md`](./docs/SPEC-webui-stage-a.md)
 
-### Stage B — Review 状态机(📋 next webui phase)
+### Stage B-1 — Review 状态机 单 finding 维度(✅ shipped 2026-06-01)
 
-| 任务 |
-|---|
-| POST /api/reviews/:finding_id (status: confirmed / dismissed / triaged) |
-| reviews/ append-only 持久化(独立目录, 不污染 findings/) |
-| webui findings 列表加 status filter + 一键打标按钮 |
-| LLM verdict 推翻按钮 + 推翻原因记录 |
+跟 LLM verdict 对齐, 4 个状态 (用户决策 2026-06-01):
+- `correct` ≈ LLM false-positive: agent 响应正确, finding 误报
+- `agent-error` ≈ LLM real-issue: agent 真错了
+- `unclear` ≈ LLM unclear: 信息不够
+- `triaged`: 已处理 (改了 SKILL.md / 加错题本)
+
+Shipped 组件:
+- core/types/review.ts — ReviewRecord + ReviewStatus union
+- core/reviews/store.ts — ReviewsStore (read / readAll / upsert / remove)
+- webui-server/routes/reviews.ts — GET/POST/DELETE /api/reviews/:id
+- webui-server/routes/findings.ts — join review_status, filter ?review_status=
+- webui FindingDetail — 4 radio + notes + save/remove + react-query invalidate
+- webui FindingsPage — row 显示 ✓ review badge + 顶部 filter
+
+存储: `~/Documents/projects/skill-recall-data/reviews/<finding_id>.json` (append-only history)
+finding_id = `<jsonl-filename>:<line-number>`, filesystem-safe `:` → `__`
+
+实测 E2E:
+- POST/GET/DELETE 4 endpoint 全通
+- findings API 自动 join `_review_status / _review_notes`
+- review_status=agent-error → 1 finding, unreviewed → 94 (数学一致)
+- webui build: 316 KB / gzip 99 KB (+6 KB vs Stage A)
+
+### Stage B-2 — pattern 维度批量打标(💭 等 B-1 用一两周后)
+
+跟据 B-1 数据决定是否做. 触发条件: B-1 重复打同款 finding 痛点真实出现.
+
+可能形态:
+- pattern_id = hash(skill, type, trigger_keyword)
+- 打 FP 时弹"还有 N 条相同 pattern, 一起打 FP?"
+- pattern 状态优先级 < 单 finding 状态(用户细调能 override)
+
+### Stage B-3 — 用户发言全维度打标(💭 长期)
+
+跟 B-1/B-2 互补: 不只看 detector 找的, 看**所有** user message → agent 响应对.
+能识别 false negative (detector 盲区), 但工作量大. 等 B-1/B-2 跑稳再说.
 
 ### Stage C — 时间序列 / 跨周对比(💭 long-term)
 

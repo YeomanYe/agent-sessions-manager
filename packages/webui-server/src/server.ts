@@ -22,6 +22,7 @@ import {
 import { findingsRoute } from "./routes/findings"
 import { sessionsRoute } from "./routes/sessions"
 import { skillsRoute } from "./routes/skills"
+import { reviewsRoute } from "./routes/reviews"
 
 const PORT = Number(process.env.WEBUI_SERVER_PORT ?? 5174)
 
@@ -35,7 +36,7 @@ app.use(
   "/api/*",
   cors({
     origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
-    allowMethods: ["GET", "POST", "OPTIONS"],
+    allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
   })
 )
 
@@ -52,6 +53,7 @@ app.get("/api/health", (c) =>
 app.route("/api/findings", findingsRoute(config))
 app.route("/api/sessions", sessionsRoute())
 app.route("/api/skills", skillsRoute(config))
+app.route("/api/reviews", reviewsRoute(config))
 
 app.notFound((c) => c.json({ error: "not found", path: c.req.path }, 404))
 

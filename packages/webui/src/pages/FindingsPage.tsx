@@ -17,17 +17,26 @@ export function FindingsPage() {
   const skill = params.get("skill") ?? ""
   const type = params.get("type") ?? ""
   const llmVerdict = params.get("llm_verdict") ?? ""
+  const reviewStatus = params.get("review_status") ?? ""
   const offset = Number(params.get("offset") ?? 0)
   const view: ViewMode = (params.get("view") as ViewMode) || "session"
 
   const facetsQ = useQuery({ queryKey: ["facets"], queryFn: fetchFacets })
   const findingsQ = useQuery({
-    queryKey: ["findings", skill, type, llmVerdict, view === "flat" ? offset : "all"],
+    queryKey: [
+      "findings",
+      skill,
+      type,
+      llmVerdict,
+      reviewStatus,
+      view === "flat" ? offset : "all",
+    ],
     queryFn: () =>
       fetchFindings({
         skill: skill || undefined,
         type: type || undefined,
         llm_verdict: llmVerdict || undefined,
+        review_status: reviewStatus || undefined,
         limit: view === "flat" ? PAGE_SIZE : GROUPED_LIMIT,
         offset: view === "flat" ? offset : 0,
       }),
@@ -90,6 +99,12 @@ export function FindingsPage() {
             value={llmVerdict}
             options={facetsQ.data?.llm_verdicts ?? []}
             onChange={(v) => updateParam("llm_verdict", v)}
+          />
+          <Filter
+            label="review"
+            value={reviewStatus}
+            options={["unreviewed", "reviewed", "correct", "agent-error", "unclear", "triaged"]}
+            onChange={(v) => updateParam("review_status", v)}
           />
           <div className="flex flex-col gap-1">
             <label className="text-[10px] uppercase text-muted">view</label>
@@ -340,6 +355,7 @@ function FindingRow({
         <span className="badge font-mono">{finding.type}</span>
         <span className="text-sm font-semibold">{finding.skill}</span>
         <VerdictBadge verdict={finding.llm_verdict} />
+        <ReviewBadge status={finding._review_status} />
         {finding.event_index !== undefined && (
           <span className="text-xs text-muted font-mono">event {finding.event_index}</span>
         )}
@@ -360,4 +376,14 @@ function VerdictBadge({ verdict }: { verdict?: string }) {
   if (verdict === "real-issue") return <span className="badge badge-danger">real-issue</span>
   if (verdict === "false-positive") return <span className="badge badge-success">FP</span>
   return <span className="badge badge-warning">{verdict}</span>
+}
+
+function ReviewBadge({ status }: { status?: string }) {
+  if (!status) return null
+  const cls =
+    status === "correct" ? "badge-success" :
+    status === "agent-error" ? "badge-danger" :
+    status === "unclear" ? "badge-warning" :
+    "badge"
+  return <span className={cn("badge text-xs", cls)}>✓ {status}</span>
 }

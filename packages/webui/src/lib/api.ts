@@ -7,11 +7,17 @@ import type {
   SessionDetail,
   StaticExtractedPoints,
   LlmExtractedPoints,
+  ReviewRecord,
+  ReviewStatus,
 } from "@agent-sessions-manager/core"
+
+export type { ReviewRecord, ReviewStatus }
 
 export interface IdentifiedFinding extends Finding {
   _id: string
   _file: string
+  _review_status?: ReviewStatus
+  _review_notes?: string
   llm_verdict?: "real-issue" | "false-positive" | "unclear"
   llm_reasoning?: string
   llm_confidence?: number
@@ -42,6 +48,7 @@ export interface FindingsQuery {
   skill?: string
   type?: string
   llm_verdict?: string
+  review_status?: string  // "unreviewed" | "reviewed" | <ReviewStatus>
   since?: string
   limit?: number
   offset?: number
@@ -61,6 +68,7 @@ export function fetchFindings(q: FindingsQuery): Promise<FindingsResponse> {
   if (q.skill) params.set("skill", q.skill)
   if (q.type) params.set("type", q.type)
   if (q.llm_verdict) params.set("llm_verdict", q.llm_verdict)
+  if (q.review_status) params.set("review_status", q.review_status)
   if (q.since) params.set("since", q.since)
   if (q.limit !== undefined) params.set("limit", String(q.limit))
   if (q.offset !== undefined) params.set("offset", String(q.offset))
@@ -77,4 +85,28 @@ export function fetchSession(id: string, source = "claude"): Promise<SessionDeta
 
 export function fetchSkills(): Promise<SkillsResponse> {
   return get<SkillsResponse>("/api/skills")
+}
+
+// ─── Reviews API ────────────────────────────────────────────────────────────
+
+export async function upsertReview(
+  findingId: string,
+  body: { status: ReviewStatus; notes?: string }
+): Promise<ReviewRecord> {
+  const r = await fetch(`/api/reviews/${encodeURIComponent(findingId)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`)
+  return r.json() as Promise<ReviewRecord>
+}
+
+export async function deleteReview(findingId: string): Promise<void> {
+  const r = await fetch(`/api/reviews/${encodeURIComponent(findingId)}`, { method: "DELETE" })
+  if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`)
+}
+
+export function fetchReview(findingId: string): Promise<ReviewRecord> {
+  return get<ReviewRecord>(`/api/reviews/${encodeURIComponent(findingId)}`)
 }

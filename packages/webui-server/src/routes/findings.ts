@@ -7,28 +7,48 @@
 import { Hono } from "hono"
 import * as fs from "fs"
 import * as path from "path"
-import type { SkillRecallConfig, Finding } from "@agent-sessions-manager/core"
+import {
+  ReviewsStore,
+  type SkillRecallConfig,
+  type Finding,
+  type ReviewStatus,
+} from "@agent-sessions-manager/core"
 
 interface IdentifiedFinding extends Finding {
   /** synthetic id: "<filename>:<line>" */
   _id: string
   /** source jsonl filename */
   _file: string
+  /** review status if user has triaged */
+  _review_status?: ReviewStatus
+  _review_notes?: string
 }
 
 export function findingsRoute(config: SkillRecallConfig) {
   const app = new Hono()
   const findingsDir = path.join(config.storage.base_path, "findings")
+  const reviewsStore = new ReviewsStore(config.storage.base_path)
 
   app.get("/", (c) => {
     const skill = c.req.query("skill")
     const type = c.req.query("type")
     const llmVerdict = c.req.query("llm_verdict")
+    const reviewStatus = c.req.query("review_status")  // "unreviewed" | "reviewed" | <ReviewStatus>
     const since = c.req.query("since")
     const limit = Number(c.req.query("limit") ?? 50)
     const offset = Number(c.req.query("offset") ?? 0)
 
     const all = loadAllFindings(findingsDir)
+    const reviews = reviewsStore.readAll()
+
+    // Join review status to each finding
+    for (const f of all) {
+      const r = reviews.get(f._id)
+      if (r) {
+        f._review_status = r.status
+        f._review_notes = r.notes
+      }
+    }
 
     let filtered = all
     if (skill) filtered = filtered.filter((f) => f.skill === skill)
@@ -38,6 +58,13 @@ export function findingsRoute(config: SkillRecallConfig) {
         const v = (f as { llm_verdict?: string }).llm_verdict
         if (llmVerdict === "unverified") return !v
         return v === llmVerdict
+      })
+    }
+    if (reviewStatus) {
+      filtered = filtered.filter((f) => {
+        if (reviewStatus === "unreviewed") return !f._review_status
+        if (reviewStatus === "reviewed") return !!f._review_status
+        return f._review_status === reviewStatus
       })
     }
     if (since) {
@@ -76,7 +103,14 @@ export function findingsRoute(config: SkillRecallConfig) {
 
     try {
       const finding = JSON.parse(lines[idx])
-      return c.json({ ...finding, _id: id, _file: filename })
+      const review = reviewsStore.read(id)
+      return c.json({
+        ...finding,
+        _id: id,
+        _file: filename,
+        _review_status: review?.status,
+        _review_notes: review?.notes,
+      })
     } catch {
       return c.json({ error: "malformed jsonl line" }, 500)
     }
